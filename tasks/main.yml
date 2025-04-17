@@ -1,0 +1,76 @@
+---
+# tasks file for ansible_join
+
+# Configure sudo.
+
+- name: Install sudo if not already installed.
+  ansible.builtin.apt:
+    name: sudo
+    state: present
+
+# Enable the automatic creation of home directories on first login. Disabled by default for Debian.
+
+- name: Install oddjob if not already installed.
+  ansible.builtin.apt:
+    name:
+      - oddjob
+      - oddjob-mkhomedir
+    state: present
+
+- name: Eanble automatic home directory creation.
+  copy:
+    src: "{{ role_path }}/files/mkhomedir"
+    dest: /usr/share/pam-configs/mkhomedir
+
+- name: Enable automatic home directory creation
+  command: pam-auth-update --enable mkhomedir
+
+# Remove terminated user accounts.
+
+- name: Remove user's account.
+  user:
+    name: "{{ item }}"
+    state: absent
+    remove: yes
+  with_items: "{{ users_remove }}"
+  when: users_remove | length == 0
+
+- name: Remove user's home directories.
+  ansible.builtin.file:
+    path: "/home/{{ item }}"
+    state: absent
+  with_items: "{{ users_remove }}"
+  when: users_remove | length == 0
+
+# Create/update user accounts.
+
+- name: Create all required user accounts.
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    uid: "{{ item.uid }}"
+    groups: "{{ item.group }}"
+    shell: "{{ user_shell }}"
+    createhome: yes
+  with_items: "{{ user_accounts }}"
+
+- name: Install public keys for all required user accounts.
+  ansible.builtin.authorized_key:
+    user: "{{ item.name }}"
+    state: present
+    key: "{{ lookup('file', '{{ item.name }}.pub') }}"
+    path: "/home/{{ item.name }}/.ssh/authorized_keys"
+  with_items: "{{ user_accounts }}"
+
+# Disable password-based authentication for SSH.
+
+- name: Disable SSH password-based authentication.
+  ansible.builtin.lineinfile:
+    backup: yes
+    state: present
+    path: /etc/ssh/sshd_config
+    regexp: "^{{ item.search }}"
+    line: "{{ item.replace }}"
+  with_items:
+    - { search: '#PasswordAuthentication yes', replace: 'PasswordAuthentication no' }
+    - { search: 'PermitRootLogin yes', replace: 'PermitRootLogin Prohibit-Password' }
+  notify: restart ssh
